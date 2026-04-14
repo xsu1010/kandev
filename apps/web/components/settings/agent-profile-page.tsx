@@ -12,8 +12,10 @@ import { useToast } from "@/components/toast-provider";
 import { UnsavedChangesBadge, UnsavedSaveButton } from "@/components/settings/unsaved-indicator";
 import { ProfileFormFields } from "@/components/settings/profile-form-fields";
 import { deleteAgentProfileAction, updateAgentProfileAction } from "@/app/actions/agents";
-import type { ActiveSessionInfo } from "@/lib/types/agent-profile-errors";
-import { AgentProfileDeleteDialog } from "@/components/settings/agent-profile-delete-dialog";
+import {
+  AgentProfileDeleteDialog,
+  type DeleteDialogState,
+} from "@/components/settings/agent-profile-delete-dialog";
 import type {
   Agent,
   AgentProfile,
@@ -275,7 +277,9 @@ function useProfileDelete(
   syncAgentsToStore: (agents: Agent[]) => void,
   toast: ReturnType<typeof useToast>["toast"],
 ) {
-  const [conflictSessions, setConflictSessions] = useState<ActiveSessionInfo[] | null>(null);
+  const [deleteDialogState, setDeleteDialogState] = useState<DeleteDialogState>({
+    mode: "closed",
+  });
 
   const removeProfileFromStore = () => {
     const nextAgents = settingsAgents.map((agentItem: Agent) =>
@@ -290,28 +294,33 @@ function useProfileDelete(
     window.location.assign("/settings/agents");
   };
 
-  const handleDeleteProfile = async () => {
-    const result = await deleteAgentProfileAction(draft.id);
-    if (result.status === "ok") {
-      removeProfileFromStore();
-    } else if (result.status === "conflict") {
-      setConflictSessions(result.activeSessions);
-    } else {
-      toast({ title: "Failed to delete profile", description: result.message, variant: "error" });
+  const requestDelete = () => {
+    setDeleteDialogState({ mode: "confirm" });
+  };
+
+  const handleConfirm = async () => {
+    if (deleteDialogState.mode === "confirm") {
+      const result = await deleteAgentProfileAction(draft.id);
+      if (result.status === "ok") {
+        removeProfileFromStore();
+      } else if (result.status === "conflict") {
+        setDeleteDialogState({ mode: "conflict", sessions: result.activeSessions });
+      } else {
+        setDeleteDialogState({ mode: "closed" });
+        toast({ title: "Failed to delete profile", description: result.message, variant: "error" });
+      }
+    } else if (deleteDialogState.mode === "conflict") {
+      const result = await deleteAgentProfileAction(draft.id, true);
+      setDeleteDialogState({ mode: "closed" });
+      if (result.status === "ok") {
+        removeProfileFromStore();
+      } else if (result.status === "error") {
+        toast({ title: "Failed to delete profile", description: result.message, variant: "error" });
+      }
     }
   };
 
-  const handleForceDelete = async () => {
-    const result = await deleteAgentProfileAction(draft.id, true);
-    setConflictSessions(null);
-    if (result.status === "ok") {
-      removeProfileFromStore();
-    } else if (result.status === "error") {
-      toast({ title: "Failed to delete profile", description: result.message, variant: "error" });
-    }
-  };
-
-  return { handleDeleteProfile, conflictSessions, setConflictSessions, handleForceDelete };
+  return { requestDelete, deleteDialogState, setDeleteDialogState, handleConfirm };
 }
 
 function ProfileEditor({
@@ -337,7 +346,7 @@ function ProfileEditor({
     syncAgentsToStore,
     toast,
   });
-  const { handleDeleteProfile, conflictSessions, setConflictSessions, handleForceDelete } =
+  const { requestDelete, deleteDialogState, setDeleteDialogState, handleConfirm } =
     useProfileDelete(agent, draft, settingsAgents, syncAgentsToStore, toast);
 
   return (
@@ -387,14 +396,14 @@ function ProfileEditor({
         }
       />
 
-      <DeleteProfileCard onDelete={handleDeleteProfile} />
+      <DeleteProfileCard onDelete={requestDelete} />
 
       <AgentProfileDeleteDialog
-        activeSessions={conflictSessions}
+        state={deleteDialogState}
         onOpenChange={(open) => {
-          if (!open) setConflictSessions(null);
+          if (!open) setDeleteDialogState({ mode: "closed" });
         }}
-        onConfirm={handleForceDelete}
+        onConfirm={handleConfirm}
       />
     </div>
   );
